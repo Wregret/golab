@@ -18,22 +18,22 @@ const (
 
 type Master struct {
 	// Your definitions here.
-	mu sync.Mutex
-	R int
-	M int
-	MapMonitor []*MapInfo
+	mu            sync.Mutex
+	R             int // nReduce
+	M             int // nMap
+	MapMonitor    []*MapInfo
 	ReduceMonitor []*ReduceInfo
 }
 
 type MapInfo struct {
 	Filename string
-	State int
-	Done chan struct{}
+	State    int
+	Done     chan struct{}
 }
 
 type ReduceInfo struct {
 	State int
-	Done chan struct{}
+	Done  chan struct{}
 }
 
 func countDownMapTask(m *Master, mi *MapInfo) {
@@ -65,24 +65,13 @@ func countDownReduceTask(m *Master, ri *ReduceInfo) {
 }
 
 // Your code here -- RPC handlers for the worker to call.
-
-//
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func (m *Master) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
-	return nil
-}
-
 func (m *Master) AssignTask(args *AssignTaskArgs, reply *AssignTaskReply) error {
 	// Assign map task and check if all map tasks are completed
 	for completedMapTask := 0; completedMapTask < len(m.MapMonitor); {
 		m.mu.Lock()
 		for idx, mi := range m.MapMonitor {
 			if mi.State == completed {
-				completedMapTask ++
+				completedMapTask++
 			} else {
 				completedMapTask = 0
 			}
@@ -189,7 +178,7 @@ func MakeMaster(files []string, nReduce int) *Master {
 			Done:     make(chan struct{}),
 		})
 	}
-	for i := 0; i < nReduce; i ++ {
+	for i := 0; i < nReduce; i++ {
 		m.ReduceMonitor = append(m.ReduceMonitor, &ReduceInfo{
 			State: idle,
 			Done:  make(chan struct{}),
