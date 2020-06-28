@@ -375,6 +375,8 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term          int
 	Success       bool
+	ConflictIndex int
+	ConflictTerm  int
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
@@ -404,9 +406,21 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 	// Receiver rules 2 with log backtracking optimization
-	if args.PrevLogIndex < 0 || args.PrevLogIndex >= len(rf.log) || args.PrevLogTerm != rf.log[args.PrevLogIndex].Term{
+	if args.PrevLogIndex < 0 || args.PrevLogIndex >= len(rf.log) {
 		reply.Success = false
+		reply.ConflictTerm = -1
+		reply.ConflictIndex = len(rf.log)
 		DPrintf("[RAFT %d][TERM %d]: Reject AE PLI: %d, len(rf.log): %d", rf.me, rf.currentTerm, args.PrevLogIndex, len(rf.log))
+		return
+	}
+	if args.PrevLogTerm != rf.log[args.PrevLogIndex].Term {
+		reply.Success = false
+		reply.ConflictTerm = rf.log[args.PrevLogIndex].Term
+		firstIdxOfConflictTerm := args.PrevLogIndex
+		for rf.log[firstIdxOfConflictTerm].Term == reply.ConflictTerm {
+			firstIdxOfConflictTerm--
+		}
+		reply.ConflictIndex = firstIdxOfConflictTerm + 1
 		return
 	}
 	// Receiver rules 3
@@ -500,8 +514,20 @@ func (rf *Raft) sendAppendEntriesTo(to int) {
 			rf.mu.Unlock()
 			return
 		}
-		// AppendEntries fail because of log
-		rf.nextIndex[to] = int(math.Max(float64(rf.nextIndex[to]/2), 1))
+		// AppendEntries fail because of log inconsistency with log backtracking optimization
+		if reply.ConflictTerm == -1 {
+			rf.nextIndex[to] = reply.ConflictIndex
+		} else {
+			lastIdxOfConflictTerm := len(rf.log) - 1
+			for lastIdxOfConflictTerm > -1 && rf.log[lastIdxOfConflictTerm].Term != reply.ConflictTerm {
+				lastIdxOfConflictTerm--
+			}
+			if lastIdxOfConflictTerm == -1 {
+				rf.nextIndex[to] = reply.ConflictIndex
+			} else {
+				rf.nextIndex[to] = lastIdxOfConflictTerm + 1
+			}
+		}
 		DPrintf("[RAFT %d][TERM %d]: AppendEntries to %d failed. ", rf.me, rf.currentTerm, to)
 		go rf.sendAppendEntriesTo(to)
 		rf.mu.Unlock()
